@@ -7,7 +7,7 @@ user_type = None
 # print enumerated options from list
 def print_options(options):
     for i, option in enumerate(options):
-        print(i+1,options[i])
+        print(i+1,". ",options[i], sep="")
 
 # take user input in a range, re-take input if incorrect
 def userinput_range(start, end):
@@ -245,5 +245,6 @@ if __name__ == '__main__':
         print("Unable to connect to database ('database.db')")
         print("Make sure to create the database and store it in root of project")
         print("A mock database is present as mock.db. Use it to get to know the schema")
+        exit()
     mainmenu()
     
