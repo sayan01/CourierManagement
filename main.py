@@ -241,6 +241,9 @@ if __name__ == '__main__':
     heading = "Courier Mailing System"
     print(len(heading)*"-","\n"+heading,"\n"+len(heading)*"-")
     connection = db.connect("database.db")
-    if not connection: exit()
+    if not connection:
+        print("Unable to connect to database ('database.db')")
+        print("Make sure to create the database and store it in root of project")
+        print("A mock database is present as mock.db. Use it to get to know the schema")
     mainmenu()
     
