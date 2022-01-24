@@ -46,6 +46,7 @@ def statuscode(status):
         "CAN" : "Cancelled",
         }[status]
 
+# input a string from user 
 def inputstring(value):
     inp = ""
     while inp == "":
@@ -55,41 +56,42 @@ def inputstring(value):
 
 
 # signup actions
+
+# signup user into 'tablename' table (agent or customer). Take username, passwd, name,phone. Hash pwd
 def xsignup(tablename):
-    query = f"select username from {tablename} where username = ?"
     username = None
-    while not username:
+    while not username: # keep on asking for username until a non-taken username is provided
         username = input("Enter username (max 32 characters): ")
+        query = f"select username from {tablename} where username = ?"
         user = db.execute_read(connection, query, (username,))
         if user:
             print("Username is taken, Please choose some other username")
             username = None
     password = input("Enter password: ")
-    hashedpw = hashpwd(username, password)
+    hashedpw = hashpwd(username, password) # hash the password with username using SHA-512
     name = input("Enter Name: ")
     phone = input("Enter phone number: ")
-    query = f"insert into {tablename} values(?, ?, ?, ?);"
+    query = f"insert into {tablename} values(?, ?, ?, ?);" # insert the values to db
     if not db.execute(connection, query, (username,hashedpw,name,phone)):
         print("Error while creating user")
     else:
         print("Sign up successful")
-    mainmenu()
+    mainmenu() # go back to main menu
 
-def signup_cust():
-    xsignup('customer')
-
-def signup_agent():
-    xsignup('agent')
-
-def signup():
+def signup(): # signup menu, show option of customer or agent
     options = ["Sign Up as a Customer", "Sign up as an Delivery Agent", "Exit"]
-    actions = [signup_cust, signup_agent, exit]
-    userinput(options, actions)
+    actions = [xsignup] * 2 + [exit]
+    paramlists = [('customer',), ('agent',), ()]
+    userinput(options, actions,paramlists)
     
 
 # customer helper actions
+
+# show detailed details of a package from customer side
 def package_details_cust(package):
+    # unpack the details from package
     orderid, deliveryid, status, rname, address, weight, _type, rate, typename, payment = package;
+    # print details
     print("Order UID:", orderid)
     print("Status:", status, f"({statuscode(status)})")
     print("Recipient Name:", rname)
@@ -107,13 +109,17 @@ def package_details_cust(package):
         options += ["Mark as Cancelled"]
         actions += [mark_del_status]
         paramlists += [(deliveryid, 'CAN')]
+    # options available for all packages
     options += ["Back", "Exit"]
     actions += [trackpack, exit]
     paramlists += [()]*2
+    # user choice of marking as cancel or going back or exit
     userinput(options, actions,paramlists)
     trackpack()
 
 # customer actions
+
+# shows all packages ordered by this customer, and their status and details
 def trackpack():
     if user_type != 'customer' or not authorised_user:
         print("User should be customer")
@@ -142,20 +148,25 @@ def trackpack():
         item.type = item_types.id;
     """
     packages = db.execute_read(connection, query, (authorised_user,))
+    # if no packages ordered by this user
     if len(packages) == 0:
         print("No packages to display")
         mainmenu()
         return
+    # if error fetching packages
     if not packages:
         print("Error fetching packages")
         mainmenu()
         return
+    # header
     print("#\tStatus\tDelivery Address\t\t\tWeight\tType\t\tPrice\tPayment Method") # print packages
     for index, package in enumerate(packages):
+        # unpack package into variables
         orderid, deliveryid, status, rname, address, weight, _type, rate, typename, payment = package;
         print(index+1,status,address, f"{weight}gm", _type + " (" + typename+")", f"₹{weight * rate}" , payment,  sep="\t")
     print("Choose package to show more details")
     print("Enter 0 to go back")
+    # let the user choose a package (by their #) or to go back (0)
     choice = userinput_range(0, len(packages))
     actions = [mainmenu] + [package_details_cust]*len(packages)
     paramlists = [()] + [(packages[choice-1],)]*len(packages)
@@ -164,6 +175,7 @@ def trackpack():
 def paycash():
     return "CASH"
 
+# dummy method for payment verification of card
 def paycard():
     cardno = input("Enter card number: ")
     expmon = input("Enter expiry month: ")
@@ -173,7 +185,7 @@ def paycard():
     otp = input("Enter OTP: ")
     return "CARD#"+cardno
 
-
+# dummy method for payment verification of UPI
 def payupi():
     print("Please make a payment of the above mentioned amount to UPI ID courier@oksbi")
     txnid = ""
@@ -182,24 +194,27 @@ def payupi():
         if txnid == "": print("Enter valid transaction ID")
     return "UPI#"+txnid
     
+# finds the agent who has the least assignments
 def findagent():
+    # get all the agents who are already assigned some delivery and the number of assignments
     query = "select agent, count(agent) from delivery where status='OTW' group by agent order by count(agent);"
     agentlist = db.execute_read(connection, query)
-    agentdict = {agent[0]:agent[1] for agent in agentlist}
-    query = "select username from agent"
+    agentdict = {agent[0]:agent[1] for agent in agentlist} # create a dictionary of username:number of assignments
+    query = "select username from agent" # get all agents
     agentlist = db.execute_read(connection, query)
     for agent in agentlist:
-        if agent[0] not in agentdict:
+        if agent[0] not in agentdict: # if some agent has not been assigned any delivery yet, put him in dict too
             agentdict[agent[0]] = 0
-    minheap = list(dict(sorted(agentdict.items(),key=lambda i:i[1])))
+    minheap = list(dict(sorted(agentdict.items(),key=lambda i:i[1]))) # sort the dict wrt no. of assignments
     if not minheap:
         print("ERROR: No agent to assign to")
         return None
-    return minheap[0]
+    return minheap[0] # return the agent with minimum assignments
 
+# create new delivery courier from customer side
 def newcourier():
     print("Enter type of Item to be parcelled ")
-    query = "select id, label from item_types;"
+    query = "select id, label from item_types;" # get all the item_types
     itemtypes = db.execute_read(connection, query)
     if not itemtypes:
         print("Error fetching item types")
@@ -207,28 +222,29 @@ def newcourier():
     print_options(itemtypes)
     choice = userinput_range(1, len(itemtypes))
     itemtype = itemtypes[choice-1]
-    query = "select rate from item_types where id = ?"
+
+    query = "select rate from item_types where id = ?" # get rate of the selected item type
     rate = db.execute_read(connection, query, (itemtype[0],))[0][0]
-    print(f"Rate of {itemtype} is ₹{rate}/gm")
+    print(f"Rate of {itemtype} is ₹{rate}/gm") # print the rate
     weight = 0.0
-    while weight <= 0:
+    while weight <= 0: # input weight of item
         weight = float(input("Enter weight of parcel(in gms): "))
         if weight <= 0: print("Weight need to be positive")
-    recname = inputstring("Recipient Name")
-    recaddress = inputstring("Recipient Address")
+    recname = inputstring("Recipient Name") # input recipient name
+    recaddress = inputstring("Recipient Address") # input recipient address
 
-    print(f"Total price payable = ₹{rate}/gm * {weight}gm = ₹{rate*weight}")
-    choice = input("Confirm? Y/N: ")
+    print(f"Total price payable = ₹{rate}/gm * {weight}gm = ₹{rate*weight}") # show total price (rate*wt)
+    choice = input("Confirm? Y/N: ") # confirm
     if choice.strip().upper() != 'Y':
         mainmenu()
         return
         
-    paymentoptions = ["CASH", "CARD", "UPI"]
+    paymentoptions = ["CASH", "CARD", "UPI"] # ask payment preference
     actions = [paycash, paycard, payupi]
     print("Enter payment method")
-    paymentstring = userinput(paymentoptions, actions)
+    paymentstring = userinput(paymentoptions, actions) # get the payment string based on payment option
 
-    added = False
+    added = False # whether was able to do all required transactions
     query = """insert into item(weight, type) values(?, ?);"""
     if db.execute(connection, query, (weight, itemtype[0])):
         query = """select last_insert_rowid();"""
@@ -252,6 +268,8 @@ def newcourier():
     mainmenu()
 
 # agent helper actions
+
+# mark the delivery status of a package
 def mark_del_status(_id, status):
     query = "update delivery set status = ? where id = ?"
     if not db.execute(connection, query, (status, _id)):
@@ -261,8 +279,10 @@ def mark_del_status(_id, status):
         print("Delivery Status Updated Successfully")
         return True
 
+# print package details of a delivery from the pov of agent
 def package_details(package):
-    _id, status, recipientname, address, agent, itemno = package;
+    _id, status, recipientname, address, agent, itemno = package; # unpack package into variables
+    # print details
     print("Delivery UID:", _id)
     print("Status:", status, f"({statuscode(status)})")
     print("Recipient Name:", recipientname)
@@ -273,7 +293,7 @@ def package_details(package):
     actions = []
     paramlists = []
     if status == 'OTW': # delivery partner can only mark status of package which is OTW with him
-        options += ["Mark as Delivered", "Mark as Returned", "Mark as Damaged"]
+        options += ["Mark as Delivered", "Mark as Returned", "Mark as Damaged"] # let agent mark package as DEL/DAM/RET
         actions += [mark_del_status]*3
         paramlists += [(_id, 'DEL'), (_id, 'RET'), (_id, 'DAM')]
     options += ["Back", "Exit"]
@@ -283,12 +303,18 @@ def package_details(package):
     assignments()
         
 # agent actions
-def assignments():
+
+# show agent assignments
+def assignments(): 
     if user_type != 'agent' or not authorised_user: # if not agent
         print("User should be agent")
         exit()
     query = "select * from delivery where agent = ?;" # get all the packages deliverable/delivered by this agent
     packages = db.execute_read(connection, query, (authorised_user,))
+    if len(packages) == 0:
+        print("No packages assigned")
+        mainmenu()
+        return
     if not packages:
         print("Error fetching packages")
         mainmenu()
@@ -305,6 +331,8 @@ def assignments():
     perform_action(choice, actions, paramlists)
         
 # common actions
+
+#update name of user
 def update_name():
     name = input("Enter new name: ")
     query = f"update {user_type} set name = ? where username = ?"
@@ -314,6 +342,7 @@ def update_name():
         print("Name Updated Successfully")
         mainmenu()
 
+# update phone number of user
 def update_phone():
     phone = input("Enter new phone number: ")
     query = f"update {user_type} set phone = ? where username = ?"
@@ -323,6 +352,7 @@ def update_phone():
         print("Phone Number Updated Successfully")
         mainmenu()
 
+# update password of user (hash pwd and put in db)
 def update_pass():
     passwd = input("Enter new password: ")
     passwd2 = input("Confirm password: ")
@@ -337,6 +367,7 @@ def update_pass():
         print("Password Changed Successfully")
         mainmenu()
 
+# show details of user (cust or agent)
 def mydetails():
     username = authorised_user
     query = f"select * from {user_type} where username = ?;"
@@ -346,14 +377,14 @@ def mydetails():
         exit()
     user = user[0]
     print("Name:", user[2])
-    print("username:", user[0])
+    print("Username:", user[0])
     print("Phone Number:", user[3])
 
     options = ["Update Name", "Update Phone Number", "Change Password", "Back", "Exit"]
     actions = [update_name, update_phone, update_pass, mainmenu, exit]
     userinput(options, actions)
 
-# login
+# login - check if hashed password is same as db
 def xlogin(tablename):
     global user_type, authorised_user
     username = input(f"Enter {tablename} username: ")
