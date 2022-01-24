@@ -8,6 +8,7 @@ user_type = None
 def print_options(options):
     for i, option in enumerate(options):
         print(i+1,". ",options[i], sep="")
+    print("-"*24)
 
 # take user input in a range, re-take input if incorrect
 def userinput_range(start, end):
@@ -20,14 +21,14 @@ def userinput_range(start, end):
 # perform the index-th function in the list with the index-th parameter list
 def perform_action(index, actions, paramlists=None):
     if not paramlists: paramlists=[()]*len(actions)
-    actions[index](*paramlists[index])
+    return actions[index](*paramlists[index])
 
 # combine prev 3 helpers to show user options, take input, and perform the action
 def userinput(options, actions, paramlists=None):
     assert len(options) == len(actions)
     print_options(options)
     choice = userinput_range(1, len(options))
-    perform_action(choice-1, actions, paramlists)
+    return perform_action(choice-1, actions, paramlists)
     
 
 # salt password with username and return hashed result
@@ -41,8 +42,17 @@ def statuscode(status):
         "DEL" : "Delivered",
         "PRC" : "Processing",
         "RET" : "Returned",
-        "DAM" : "Damaged"
+        "DAM" : "Damaged",
+        "CAN" : "Cancelled",
         }[status]
+
+def inputstring(value):
+    inp = ""
+    while inp == "":
+        inp = input(f"Enter {value}: ")
+        if inp == "": print(f"{value} cannot be empty")
+    return inp
+
 
 # signup actions
 def xsignup(tablename):
@@ -76,12 +86,170 @@ def signup():
     actions = [signup_cust, signup_agent, exit]
     userinput(options, actions)
     
+
+# customer helper actions
+def package_details_cust(package):
+    orderid, deliveryid, status, rname, address, weight, _type, rate, typename, payment = package;
+    print("Order UID:", orderid)
+    print("Status:", status, f"({statuscode(status)})")
+    print("Recipient Name:", rname)
+    print("Recipient Address:", address)
+    print("Weight:", weight,"gm")
+    print("Item Type:", _type + " (" + typename+")")
+    print("Rate: ", rate)
+    print("Total Price: Rs.", rate * weight)
+    print("Payment Method:", payment)
+    print("-"*24)
+    options = []
+    actions = []
+    paramlists = []
+    if status == 'OTW': # customer can only mark status of package which is OTW as CAN
+        options += ["Mark as Cancelled"]
+        actions += [mark_del_status]
+        paramlists += [(deliveryid, 'CAN')]
+    options += ["Back", "Exit"]
+    actions += [trackpack, exit]
+    paramlists += [()]*2
+    userinput(options, actions,paramlists)
+    trackpack()
+
 # customer actions
 def trackpack():
-    pass
+    if user_type != 'customer' or not authorised_user:
+        print("User should be customer")
+        exit()
+    query = """
+    select 
+        orders.id,
+        delivery.id,
+        delivery.status,
+        delivery.recipientname,
+        delivery.address, 
+        item.weight, 
+        item.type, 
+        item_types.rate, 
+        item_types.label, 
+        orders.payment 
+    from 
+        delivery, 
+        item, 
+        item_types, 
+        orders 
+    where 
+        orders.customer = ? and 
+        orders.delivery = delivery.id and 
+        delivery.item = item.id and 
+        item.type = item_types.id;
+    """
+    packages = db.execute_read(connection, query, (authorised_user,))
+    if len(packages) == 0:
+        print("No packages to display")
+        mainmenu()
+        return
+    if not packages:
+        print("Error fetching packages")
+        mainmenu()
+        return
+    print("#\tStatus\tDelivery Address\t\t\tWeight\tType\t\tPrice\tPayment Method") # print packages
+    for index, package in enumerate(packages):
+        orderid, deliveryid, status, rname, address, weight, _type, rate, typename, payment = package;
+        print(index+1,status,address, f"{weight}gm", _type + " (" + typename+")", f"₹{weight * rate}" , payment,  sep="\t")
+    print("Choose package to show more details")
+    print("Enter 0 to go back")
+    choice = userinput_range(0, len(packages))
+    actions = [mainmenu] + [package_details_cust]*len(packages)
+    paramlists = [()] + [(packages[choice-1],)]*len(packages)
+    perform_action(choice, actions, paramlists)
 
-def payments():
-    pass
+def paycash():
+    return "CASH"
+
+def paycard():
+    cardno = input("Enter card number: ")
+    expmon = input("Enter expiry month: ")
+    expyear = input("Enter expiry year: ")
+    cvv = input("Enter CVV: ")
+    print("Please wait for OTP to arrive and enter OTP")
+    otp = input("Enter OTP: ")
+    return "CARD#"+cardno
+
+
+def payupi():
+    print("Please make a payment of the above mentioned amount to UPI ID courier@oksbi")
+    txnid = ""
+    while txnid == "":
+        txnid = input("Enter transaction ID after making payment: ")
+        if txnid == "": print("Enter valid transaction ID")
+    return "UPI#"+txnid
+    
+def findagent():
+    query = "select agent, count(agent) from delivery where status='OTW' group by agent order by count(agent);"
+    agentlist = db.execute_read(connection, query)
+    agentdict = {agent[0]:agent[1] for agent in agentlist}
+    query = "select username from agent"
+    agentlist = db.execute_read(connection, query)
+    for agent in agentlist:
+        if agent[0] not in agentdict:
+            agentdict[agent[0]] = 0
+    minheap = list(dict(sorted(agentdict.items(),key=lambda i:i[1])))
+    if not minheap:
+        print("ERROR: No agent to assign to")
+        return None
+    return minheap[0]
+
+def newcourier():
+    print("Enter type of Item to be parcelled ")
+    query = "select id, label from item_types;"
+    itemtypes = db.execute_read(connection, query)
+    if not itemtypes:
+        print("Error fetching item types")
+        exit()
+    print_options(itemtypes)
+    choice = userinput_range(1, len(itemtypes))
+    itemtype = itemtypes[choice-1]
+    query = "select rate from item_types where id = ?"
+    rate = db.execute_read(connection, query, (itemtype[0],))[0][0]
+    print(f"Rate of {itemtype} is ₹{rate}/gm")
+    weight = 0.0
+    while weight <= 0:
+        weight = float(input("Enter weight of parcel(in gms): "))
+        if weight <= 0: print("Weight need to be positive")
+    recname = inputstring("Recipient Name")
+    recaddress = inputstring("Recipient Address")
+
+    print(f"Total price payable = ₹{rate}/gm * {weight}gm = ₹{rate*weight}")
+    choice = input("Confirm? Y/N: ")
+    if choice.strip().upper() != 'Y':
+        mainmenu()
+        return
+        
+    paymentoptions = ["CASH", "CARD", "UPI"]
+    actions = [paycash, paycard, payupi]
+    print("Enter payment method")
+    paymentstring = userinput(paymentoptions, actions)
+
+    added = False
+    query = """insert into item(weight, type) values(?, ?);"""
+    if db.execute(connection, query, (weight, itemtype[0])):
+        query = """select last_insert_rowid();"""
+        itemid = db.execute_read(connection, query)
+        if itemid:
+            itemid = itemid[0][0]
+            agent = findagent()
+            if agent:
+                query = """insert into delivery(status, recipientname, address, agent, item) values('OTW', ?, ?, ?, ?);"""
+                if db.execute(connection, query, (recname, recaddress, agent, int(itemid))):
+                    query = """select last_insert_rowid();"""
+                    delid = db.execute_read(connection, query)
+                    if delid:
+                        delid = delid[0][0]
+                        query = """insert into orders(customer, delivery, payment) values(?, ?, ?);"""
+                        if db.execute(connection, query, (authorised_user, int(delid), paymentstring)):
+                            added = True
+    
+    if added: print("Order placed successfully")
+    else: print("Unable to place order")
+    mainmenu()
 
 # agent helper actions
 def mark_del_status(_id, status):
@@ -129,6 +297,7 @@ def assignments():
     for index, package in enumerate(packages):
         _id, status, recipientname, address, agent, itemno = package;
         print(index+1,status,recipientname,address, sep="\t")
+    print("Choose package to show more details")
     print("Enter 0 to go back")
     choice = userinput_range(0, len(packages))
     actions = [mainmenu] + [package_details]*len(packages)
@@ -202,8 +371,8 @@ def cuslogin():
     if(not xlogin('customer')):
         mainmenu()
         return
-    options = ["Track Package", "Payment History", "My Details", "Exit"]
-    actions = [trackpack, payments, mydetails, exit]
+    options = ["Track Package", "Make New Courier", "My Details", "Exit"]
+    actions = [trackpack, newcourier, mydetails, exit]
     userinput(options, actions)
 
 def agentlogin():
@@ -226,14 +395,14 @@ def mainmenu():
         actions = [login, signup, exit]
         userinput(options,actions)
     elif user_type == 'agent':
-        print("Logged in as: ", authorised_user)
+        print("Logged in as: ", authorised_user, f"({user_type})")
         options = ["My Assignments", "My Details", "Exit"]
         actions = [assignments, mydetails, exit]
         userinput(options, actions)
     elif user_type == 'customer':
-        print("Logged in as: ", authorised_user)
-        options = ["Track Package", "Payment History", "My Details", "Exit"]
-        actions = [trackpack, payments, mydetails, exit]
+        print("Logged in as: ", authorised_user, f"({user_type})")
+        options = ["Track Package", "Make New Courier", "My Details", "Exit"]
+        actions = [trackpack, newcourier, mydetails, exit]
         userinput(options, actions)
 
 
